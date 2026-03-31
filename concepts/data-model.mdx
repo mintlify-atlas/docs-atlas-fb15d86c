@@ -1,0 +1,128 @@
+---
+title: "Data Model"
+description: "How sumo match data is structured, loaded, and partitioned for training and prediction."
+---
+
+The Sumo Oracle project uses a single flat CSV file — `sumo.csv` — as its sole data source. All preprocessing, splitting, and normalization happens in R at runtime.
+
+## CSV structure
+
+Each row in `sumo.csv` represents one matchup between two wrestlers. By convention, the wrestler on the **left** is wrestler `1` and the wrestler on the **right** is wrestler `2`.
+
+```
+weight1,weight2,wins1,wins2,age1,age2,height1,height2,result
+401,379,6,5,35,31,190,184,1
+344,370,8,11,36,34,189,192,1
+351,245,3,2,22,27,189,169,0
+335,291,3,12,32,30,177,176,0
+```
+
+### Column reference
+
+| Column    | Type    | Unit        | Description                                      |
+| --------- | ------- | ----------- | ------------------------------------------------ |
+| `weight1` | numeric | pounds (lb) | Body weight of the left wrestler                 |
+| `weight2` | numeric | pounds (lb) | Body weight of the right wrestler                |
+| `wins1`   | numeric | count       | Career or tournament wins for the left wrestler  |
+| `wins2`   | numeric | count       | Career or tournament wins for the right wrestler |
+| `age1`    | numeric | years       | Age of the left wrestler                         |
+| `age2`    | numeric | years       | Age of the right wrestler                        |
+| `height1` | numeric | cm          | Height of the left wrestler                      |
+| `height2` | numeric | cm          | Height of the right wrestler                     |
+| `result`  | logical | —           | Outcome of the match (see below)                 |
+
+### The `result` column
+
+| Value | Meaning                                    |
+| ----- | ------------------------------------------ |
+| `1`   | Left wrestler (wrestler 1) won             |
+| `0`   | Right wrestler (wrestler 2) won            |
+| `NA`  | Match has not yet been decided (upcoming)  |
+
+<Info>
+`result` is stored as a numeric `1` or `0` in the CSV but is cast to R's `logical` type (`TRUE`/`FALSE`) on load. `NA` rows are kept in the data frame and used as the prediction target.
+</Info>
+
+## Data loading: `sumo.read()`
+
+The `sumo.read()` function reads the CSV into a tidy tibble and enforces consistent numeric types across all columns:
+
+```r
+sumo.read <- function(csv) {
+  data <- tibble(read.csv(csv)) %>%
+    mutate_all(as.numeric) %>%
+    mutate(result = as.logical(result))
+  return(data)
+}
+```
+
+The pipeline applies three transformations in order:
+
+1. `read.csv(csv)` — reads the file into a base R data frame.
+2. `tibble(...)` — wraps it in a `tibble` for consistent printing and subsetting.
+3. `mutate_all(as.numeric)` — coerces every column to `numeric`, including `result` (so `NA` values are preserved).
+4. `mutate(result = as.logical(result))` — converts the numeric `result` column to `logical` (`TRUE`/`FALSE`/`NA`).
+
+<Note>
+`mutate_all(as.numeric)` runs before the `as.logical` cast. This order matters: applying `as.logical` first would convert `0`/`1` to `FALSE`/`TRUE` before `NA` coercion has been applied uniformly.
+</Note>
+
+## Train / predict split
+
+After loading, the data is partitioned into two subsets based on whether `result` is known:
+
+```r
+data    <- sumo.read('sumo.csv')
+history   <- na.omit(data)               # rows with a known result → training
+undecided <- filter(data, is.na(result)) # rows with NA result     → prediction
+```
+
+| Subset      | Filter condition       | Purpose                               |
+| ----------- | ---------------------- | ------------------------------------- |
+| `history`   | `result` is not `NA`   | Training data for both models         |
+| `undecided` | `result` is `NA`       | Input rows for generating predictions |
+
+<Tip>
+To add an upcoming match for prediction, append a row to `sumo.csv` with the two wrestlers' stats and leave `result` blank (which becomes `NA` on load).
+</Tip>
+
+## Helper functions
+
+### `normalize(x)`
+
+Used to scale feature values to the `[0, 1]` range before feeding them into the neural network:
+
+```r
+normalize <- function(x) {
+  return( (x - min(x)) / (max(x) - min(x)) )
+}
+```
+
+This is min-max normalization. It ensures that features with large absolute values (e.g., `weight` in the 300–400 lb range) do not dominate features with smaller ranges (e.g., `wins`).
+
+<Warning>
+`normalize()` computes `min` and `max` from the training set. If a prediction-time value falls outside the training range, the normalized value will be outside `[0, 1]`. This is expected behavior for this project's scale.
+</Warning>
+
+### `data.split(data, ratio)`
+
+Splits a data frame into train and test subsets for model evaluation:
+
+```r
+data.split <- function(data, ratio) {
+  n     <- round(nrow(data) * ratio)
+  train <- sample(1:nrow(data), n)
+  test  <- setdiff(1:nrow(data), train)
+  return(list(data[train,], data[test,]))
+}
+```
+
+`ratio` is the fraction of rows assigned to the training split. For example, `data.split(history, 0.85)` places 85% of rows in training and 15% in evaluation.
+
+```r
+spl <- data.split(history, 0.85)
+tr  <- spl[[1]]   # training set
+ev  <- spl[[2]]   # evaluation set
+```
+
+The split uses `sample()` without a fixed seed, so results vary across runs. Set `set.seed()` before calling `data.split()` for reproducible splits.

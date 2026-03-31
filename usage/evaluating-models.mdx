@@ -1,0 +1,187 @@
+---
+title: "Evaluating models"
+description: "Measure the accuracy of the GLM and neural network using a train/test split and confusion matrices."
+---
+
+Before relying on predictions, you should verify that the models perform acceptably on held-out data. The evaluation workflow in `sumo.Rmd` splits historical data into a training set and an evaluation set, trains both models, generates predictions, and reports accuracy metrics via confusion matrices.
+
+## Helper functions
+
+Two utility functions support the evaluation workflow.
+
+```r
+data.split <- function(data, ratio) {
+  n <- round(nrow(data) * ratio)
+  train <- sample(1:nrow(data), n)
+  test <- setdiff(1:nrow(data), train)
+  return(list(data[train,], data[test,]))
+}
+
+normalize <- function(x) {
+  return( (x - min(x)) / (max(x) - min(x)) )
+}
+```
+
+- **`data.split(data, ratio)`** — randomly partitions `data` into two subsets. `ratio` controls the fraction assigned to training. Returns a list: `[[1]]` is the train split, `[[2]]` is the eval split.
+- **`normalize(x)`** — scales a numeric vector to the range `[0, 1]` using min-max normalization. Applied to the training data before feeding it to the neural network.
+
+## Evaluation workflow
+
+<Steps>
+  <Step title="Load data and create the train/test split">
+    Load the full historical dataset (rows with known results) and split it 85/15.
+
+    ```r
+    data <- sumo.read('sumo.csv')
+    spl <- data.split(history, 0.85)
+    tr <- spl[[1]]
+    ev <- spl[[2]]
+    ```
+
+    `tr` contains 85% of the rows for training. `ev` contains the remaining 15% and is held out entirely — neither model sees it during training.
+
+    <Note>
+      `data.split` uses `sample()`, so the split is random each run. Accuracy metrics will vary slightly between runs. Set a random seed with `set.seed(42)` before calling `data.split` if you need reproducible splits.
+    </Note>
+  </Step>
+
+  <Step title="Train the GLM">
+    Fit a binomial generalized linear model on the training split.
+
+    ```r
+    bin <- glm(result ~ ., tr, family = 'binomial')
+    ```
+
+    The formula `result ~ .` uses all columns as predictors. `family = 'binomial'` specifies logistic regression, which models the log-odds of the left wrestler winning.
+  </Step>
+
+  <Step title="Train the neural network">
+    Fit a neural network on normalized training data.
+
+    ```r
+    nn <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                    linear.output = FALSE, act.fct = 'logistic')
+    ```
+
+    The architecture uses two hidden layers with 4 and 2 nodes respectively. `normalize(tr)` scales all features to `[0, 1]` before training.
+
+    <Warning>
+      `normalize()` is applied to the entire `tr` data frame here. Because R applies the function column-by-column in `neuralnet`'s internal handling, you may want to normalize each column independently in production use to avoid data leakage between features.
+    </Warning>
+  </Step>
+
+  <Step title="Generate predictions on the eval split">
+    Run both models against the held-out `ev` rows.
+
+    ```r
+    bin.ans <- predict.glm(bin, ev)
+    nn.ans <- predict(nn, ev)
+    ```
+
+    `bin.ans` contains log-odds values for each eval row. `nn.ans` contains probabilities in `[0, 1]`.
+  </Step>
+
+  <Step title="Build the results tibble">
+    Combine predictions and ground truth into a single data frame, then convert continuous values to boolean predictions.
+
+    ```r
+    results <- tibble(bin.ans) %>% cbind(nn.ans) %>% cbind(ev$result)
+
+    results$bin.ans = sapply(results$bin.ans,
+                             function(x) {if (x > 0) {TRUE} else {FALSE}})
+
+    results$nn.ans = sapply(results$nn.ans,
+                             function(x) {if (x >= 0.5) {TRUE} else {FALSE}})
+
+    colnames(results) <- c('glm', 'nn', 'truth')
+    ```
+
+    The thresholds match those used in `pred_sumo.R`:
+
+    - GLM: log-odds `> 0` → `TRUE` (left wins)
+    - NN: probability `>= 0.5` → `TRUE` (left wins)
+
+    The final `results` tibble has three columns: `glm`, `nn`, and `truth`.
+  </Step>
+
+  <Step title="Run confusion matrices">
+    Use `confusionMatrix()` from the `caret` package to evaluate each model.
+
+    ```r
+    confusionMatrix(as.factor(results$glm), as.factor(results$truth))
+    confusionMatrix(as.factor(results$nn), as.factor(results$truth))
+    ```
+
+    Each call prints a full report including accuracy, sensitivity, specificity, and Cohen's kappa.
+
+    <Tip>
+      The GLM typically achieves around 70% accuracy. If the NN performs significantly worse, consider rerunning with a different random split — the small eval set size means results can vary.
+    </Tip>
+  </Step>
+
+  <Step title="Visualize the models">
+    Plot diagnostic charts for both models.
+
+    ```r
+    plot(bin)
+    plot(nn)
+    ```
+
+    `plot(bin)` renders four standard GLM diagnostic plots:
+
+    1. **Residuals vs Fitted** — checks for non-linearity.
+    2. **Normal Q-Q** — checks residual normality.
+    3. **Scale-Location** — checks homoscedasticity.
+    4. **Residuals vs Leverage** — identifies influential observations.
+
+    `plot(nn)` renders a graph of the neural network architecture, showing nodes, layers, and learned weights.
+  </Step>
+</Steps>
+
+## Full evaluation code
+
+```r
+data <- sumo.read('sumo.csv')
+spl <- data.split(history, 0.85)
+tr <- spl[[1]]
+ev <- spl[[2]]
+
+bin <- glm(result ~ ., tr, family = 'binomial')
+
+nn <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                linear.output = FALSE, act.fct = 'logistic')
+
+bin.ans <- predict.glm(bin, ev)
+nn.ans <- predict(nn, ev)
+
+results <- tibble(bin.ans) %>% cbind(nn.ans) %>% cbind(ev$result)
+
+results$bin.ans = sapply(results$bin.ans,
+                         function(x) {if (x > 0) {TRUE} else {FALSE}})
+
+results$nn.ans = sapply(results$nn.ans,
+                         function(x) {if (x >= 0.5) {TRUE} else {FALSE}})
+
+colnames(results) <- c('glm', 'nn', 'truth')
+
+confusionMatrix(as.factor(results$glm), as.factor(results$truth))
+confusionMatrix(as.factor(results$nn), as.factor(results$truth))
+
+plot(bin)
+plot(nn)
+```
+
+## Understanding confusion matrix output
+
+The `confusionMatrix()` output includes:
+
+| Metric | Description |
+|--------|-------------|
+| **Accuracy** | Fraction of correct predictions overall. The GLM targets ~70%. |
+| **Sensitivity** | True positive rate — how often the model correctly predicts the left wrestler wins when they do. |
+| **Specificity** | True negative rate — how often the model correctly predicts the right wrestler wins when they do. |
+| **Kappa** | Agreement beyond chance. Values above 0.4 are considered moderate agreement. |
+
+<Note>
+  With a 15% eval split and a small dataset, the absolute number of eval rows may be limited. Treat accuracy estimates as approximate and consider running multiple evaluations with different seeds to get a stable estimate.
+</Note>

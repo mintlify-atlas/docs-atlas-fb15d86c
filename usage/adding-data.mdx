@@ -1,0 +1,108 @@
+---
+title: "Adding data"
+description: "Add historical match results or upcoming matches to sumo.csv to improve predictions."
+---
+
+All match data lives in `sumo.csv`. You add both historical results (to train the models) and upcoming matches (to predict) by appending rows to this file. The format is a flat CSV with eight wrestler attribute columns and a result column.
+
+## CSV format
+
+Each row represents one match between two wrestlers referred to as "left" and "right" — corresponding to their starting position on the dohyo.
+
+```
+weight1,weight2,wins1,wins2,age1,age2,height1,height2,result
+```
+
+### Column definitions
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `weight1` | numeric | Weight of the left wrestler in lbs (typical range: 300–400 lbs) |
+| `weight2` | numeric | Weight of the right wrestler in lbs |
+| `wins1` | numeric | Career wins for the left wrestler |
+| `wins2` | numeric | Career wins for the right wrestler |
+| `age1` | numeric | Age of the left wrestler in years |
+| `age2` | numeric | Age of the right wrestler in years |
+| `height1` | numeric | Height of the left wrestler in cm |
+| `height2` | numeric | Height of the right wrestler in cm |
+| `result` | boolean | `1` if the left wrestler won, `0` if the right wrestler won, blank (`NA`) for an undecided match |
+
+### Example rows
+
+These rows are from the actual dataset:
+
+```
+401,379,6,5,35,31,190,184,1
+344,370,8,11,36,34,189,192,1
+351,245,3,2,22,27,189,169,0
+335,291,3,12,32,30,177,176,0
+```
+
+In the first row: left wrestler weighs 401 lbs, right weighs 379 lbs, left has 6 career wins to right's 5, ages are 35 and 31, heights are 190 cm and 184 cm, and the left wrestler won (`result = 1`).
+
+## How sumo.read() processes the file
+
+When `pred_sumo.R` or `sumo.Rmd` loads the data, `sumo.read()` handles all parsing:
+
+```r
+sumo.read <- function(csv) {
+  data <- tibble(read.csv(csv)) %>%
+    mutate_all(as.numeric) %>%
+    mutate(result = as.logical(result))
+  return(data)
+}
+```
+
+1. `read.csv(csv)` — reads the file into a data frame.
+2. `mutate_all(as.numeric)` — coerces every column to numeric. A blank `result` cell becomes `NA`.
+3. `mutate(result = as.logical(result))` — converts `result` to logical: `1` → `TRUE`, `0` → `FALSE`, `NA` stays `NA`.
+
+<Warning>
+  All values in every column must be numeric. Non-numeric values (text, symbols, extra spaces) will cause `mutate_all(as.numeric)` to silently produce `NA` in unexpected columns, which will then be dropped by `na.omit()` when building the training set. Double-check your data before appending.
+</Warning>
+
+## Workflow
+
+<Steps>
+  <Step title="Open sumo.csv in a text editor or spreadsheet application">
+    The file has no row index — just the header row followed by data rows. Any plain text editor or spreadsheet application (Excel, Google Sheets, LibreOffice Calc) can edit it. If using a spreadsheet application, export back to CSV format without quoting numeric fields.
+  </Step>
+
+  <Step title="Append your new row">
+    **Adding a historical match (result known):**
+
+    Append a complete row with `result` set to `1` (left wins) or `0` (right wins).
+
+    ```
+    388,305,11,4,29,24,192,178,1
+    ```
+
+    **Adding an undecided match (result unknown):**
+
+    Append a row with the `result` column left blank. The trailing comma is required — it tells R's CSV parser to produce an `NA` for that field.
+
+    ```
+    385,362,9,7,28,33,188,181,
+    ```
+
+    <Note>
+      Only one undecided row at a time is supported. The prediction script uses a scalar comparison (`if (bin.ans > 0)`) that will error if `undecided` contains more than one row. If you need to predict multiple matches, run the script once per match, adding and removing the undecided row each time.
+    </Note>
+  </Step>
+
+  <Step title="Save the file and run predictions">
+    Save `sumo.csv` and source `pred_sumo.R` to generate predictions for the undecided row, or re-run `sumo.Rmd` to update your evaluation metrics with the expanded dataset.
+
+    <Tip>
+      The more historical data you add, the better both models can learn meaningful patterns. A few dozen rows is enough to train, but accuracy improves with more data. Each new match result you record is a valuable training example for future predictions.
+    </Tip>
+  </Step>
+</Steps>
+
+## Common issues
+
+**Blank fields in the middle of a row** — only the `result` column should ever be blank. Leaving any of the eight attribute columns empty will cause that row to be treated as `NA` and dropped from the training set entirely.
+
+**Wrong units** — `weight` values should be in lbs and `height` values in cm, consistent with the existing data. Mixing units will not cause an error but will degrade model accuracy.
+
+**Extra whitespace or BOM characters** — some text editors add a byte-order mark or trailing spaces. These can cause column names to be misread. Open the file in a plain text editor if column names look malformed after loading.

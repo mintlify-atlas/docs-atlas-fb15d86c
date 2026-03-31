@@ -1,0 +1,47 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Sumo Oracle",
+  "projectDescription": "An R-based machine learning project that predicts sumo match outcomes using Bayesian GLM and neural network models trained on wrestler attributes such as height, weight, age, and win history.",
+  "theme": "palm",
+  "primaryColor": "#C0392B",
+  "lightColor": "#E74C3C",
+  "darkColor": "#7B241C",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": ["introduction", "quickstart"]
+      },
+      {
+        "group": "Concepts",
+        "pages": ["concepts/data-model", "concepts/glm-model", "concepts/neural-network"]
+      },
+      {
+        "group": "Usage",
+        "pages": ["usage/running-predictions", "usage/evaluating-models", "usage/adding-data"]
+      },
+      {
+        "group": "Reference",
+        "pages": ["reference/functions", "reference/data-schema"]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Bayesian GLM (Generalized Linear Model) for match outcome prediction with ~70% accuracy",
+    "Neural network predictor using the neuralnet R package with configurable hidden layers",
+    "CSV-based wrestler data ingestion covering weight, wins, age, and height for both competitors",
+    "Train/test split evaluation with confusion matrix reporting via caret",
+    "R Markdown report generation (sumo.Rmd) for reproducible analysis and PDF output",
+    "Side-by-side model comparison: GLM vs neural network predictions on unseen matches"
+  ],
+  "publicApiSurface": [
+    "sumo.read(csv) — reads and preprocesses sumo match CSV data into a tibble",
+    "data.split(data, ratio) — splits a dataset into train/test subsets by ratio",
+    "normalize(x) — min-max normalizes a numeric vector",
+    "glm(result ~ ., history, family = 'binomial') — fits the binomial GLM on historical match data",
+    "neuralnet(result ~ ., history, hidden = 8) — trains a neural network with configurable hidden layers",
+    "predict.glm(bin, undecided) — generates GLM predictions for undecided matches",
+    "predict(nn, undecided) — generates neural network predictions for undecided matches",
+    "confusionMatrix(predicted, truth) — evaluates model accuracy via caret"
+  ]
+}

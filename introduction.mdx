@@ -1,0 +1,100 @@
+---
+title: "Introduction"
+description: "What Sumo Oracle is, how it works, and what you need to get started"
+---
+
+Sumo Oracle is an R-based machine learning project that predicts the outcome of sumo wrestling matches. Given the physical attributes and win records of two competing wrestlers, it trains two complementary models on historical bout data and outputs a directional prediction — left wrestler wins or right wrestler wins — for any match where the result is not yet known.
+
+The project is designed to be minimal: one CSV file of data, one R script to run predictions, and one R Markdown file that produces a full reproducible analysis report with model evaluation and plots.
+
+## The two models
+
+<CardGroup cols={2}>
+  <Card title="Bayesian GLM" icon="scale-balanced">
+    A binomial logistic regression model fit with `glm()` from the `MASS` package. It achieves approximately **70% prediction accuracy** on held-out test data and produces interpretable coefficient estimates. The GLM predicts that the left wrestler wins when `bin.ans > 0`.
+  </Card>
+  <Card title="Neural network" icon="brain">
+    A feed-forward neural network with 8 hidden units trained with the `neuralnet` package. It is configured for binary classification with logistic activation. The NN predicts that the left wrestler wins when `nn.ans >= 0.5`.
+  </Card>
+</CardGroup>
+
+<Note>
+  The Bayesian GLM consistently outperforms the neural network on this dataset. Running both models gives you a second opinion and makes disagreements between them visible.
+</Note>
+
+## Required R packages
+
+All five packages are available on CRAN and can be installed in a single call.
+
+<CardGroup cols={3}>
+  <Card title="dplyr" icon="table">
+    Tibble construction, `filter()`, `mutate_all()`, and the pipe operator used throughout the data pipeline.
+  </Card>
+  <Card title="MASS" icon="chart-line">
+    A core statistical computing library loaded alongside the GLM workflow. `glm()` itself is from base R's `stats` package.
+  </Card>
+  <Card title="neuralnet" icon="network-wired">
+    Trains the feed-forward neural network and exposes the `predict()` method for inference.
+  </Card>
+  <Card title="caret" icon="square-check">
+    Used in `sumo.Rmd` for train/test splitting and `confusionMatrix()` to evaluate model accuracy.
+  </Card>
+  <Card title="ggplot2" icon="chart-bar">
+    Used in `sumo.Rmd` for diagnostic and evaluation plots alongside the built-in `plot()` methods.
+  </Card>
+</CardGroup>
+
+## Data format
+
+Sumo Oracle reads a single flat CSV file (`sumo.csv`). Each row represents one bout. The nine required columns are:
+
+| Column    | Type    | Description                                      |
+| --------- | ------- | ------------------------------------------------ |
+| `weight1` | numeric | Weight of the left wrestler (lbs)                |
+| `weight2` | numeric | Weight of the right wrestler (lbs)               |
+| `wins1`   | numeric | Career wins for the left wrestler                |
+| `wins2`   | numeric | Career wins for the right wrestler               |
+| `age1`    | numeric | Age of the left wrestler (years)                 |
+| `age2`    | numeric | Age of the right wrestler (years)                |
+| `height1` | numeric | Height of the left wrestler (cm)                 |
+| `height2` | numeric | Height of the right wrestler (cm)                |
+| `result`  | logical | `1` = left wrestler won, `0` = right wrestler won, `NA` = undecided |
+
+<Info>
+  The `result` column drives everything. Rows with a known result (`1` or `0`) become the training set. Rows where `result` is `NA` are the matches you want to predict.
+</Info>
+
+A sample of what the file looks like:
+
+```csv sumo.csv
+weight1,weight2,wins1,wins2,age1,age2,height1,height2,result
+401,379,6,5,35,31,190,184,1
+344,370,8,11,36,34,189,192,1
+351,245,3,2,22,27,189,169,0
+335,291,3,12,32,30,177,176,0
+```
+
+## How prediction works
+
+<Steps>
+  <Step title="Load the CSV">
+    `sumo.read()` reads the file into a tibble, coerces all columns to numeric, and converts `result` to logical. This handles the `NA` values automatically.
+  </Step>
+  <Step title="Split by known result">
+    Rows where `result` is not `NA` are collected into `history`. Rows where `result` is `NA` are collected into `undecided`. Training always uses the full history.
+  </Step>
+  <Step title="Train both models">
+    The GLM and neural network are each fit on `history` using all eight feature columns (`weight1`, `weight2`, `wins1`, `wins2`, `age1`, `age2`, `height1`, `height2`) as predictors and `result` as the outcome.
+  </Step>
+  <Step title="Predict undecided matches">
+    `predict.glm()` and `predict()` are called on the `undecided` rows. Each returns a numeric score that is thresholded to produce a left/right winner call.
+  </Step>
+</Steps>
+
+<Tip>
+  Because both models are retrained from scratch each time you run the script, adding more historical data to `sumo.csv` immediately improves prediction quality without any other changes.
+</Tip>
+
+## License
+
+Sumo Oracle is released under the **GPL-3.0** license. You are free to use, modify, and distribute the code provided that derivative works are also distributed under the same license.

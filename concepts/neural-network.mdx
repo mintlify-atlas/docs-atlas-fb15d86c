@@ -1,0 +1,115 @@
+---
+title: "Neural Network Model"
+description: "How the feedforward neural network is configured, trained, and used to predict sumo match outcomes."
+---
+
+The Sumo Oracle project includes a feedforward neural network as a complementary prediction method alongside the GLM. The network is implemented with R's `neuralnet` package, which trains a fully connected network using backpropagation.
+
+## Architecture
+
+The network maps the **8 input features** (`weight1`, `weight2`, `wins1`, `wins2`, `age1`, `age2`, `height1`, `height2`) through one or more hidden layers to a single output that represents the probability of the left wrestler winning.
+
+| Layer        | Neurons         | Notes                                           |
+| ------------ | --------------- | ----------------------------------------------- |
+| Input        | 8               | One node per feature column                     |
+| Hidden       | 8 (or `c(4,2)`) | Configurable; see variants below                |
+| Output       | 1               | Predicted probability; `>= 0.5` → left wins     |
+
+<Info>
+The two source files use different hidden layer configurations. `pred_sumo.R` uses a single hidden layer with 8 neurons. `sumo.Rmd` uses two hidden layers (4 neurons, then 2 neurons) with an explicit logistic activation function.
+</Info>
+
+## Input normalization
+
+Unlike the GLM, neural networks are sensitive to the scale of input features. The `sumo.Rmd` evaluation workflow normalizes the training data before fitting:
+
+```r
+normalize <- function(x) {
+  return( (x - min(x)) / (max(x) - min(x)) )
+}
+```
+
+This maps every feature value to `[0, 1]`. The normalization is applied to the training tibble using `normalize(tr)`, which calls the function column-wise via R's vectorized semantics.
+
+<Warning>
+In `pred_sumo.R`, normalization is **not** applied before training the neural network. The model is trained directly on raw feature values. This is inconsistent with the `sumo.Rmd` evaluation setup and may produce different accuracy characteristics.
+</Warning>
+
+## Training
+
+<Tabs>
+  <Tab title="pred_sumo.R">
+    ```r
+    nn <- neuralnet(result ~ ., history, hidden = 8)
+    ```
+
+    - Single hidden layer with 8 neurons.
+    - Trained on `history` (all rows with known results).
+    - Uses `neuralnet`'s default activation function (logistic sigmoid) and default backpropagation settings.
+    - Input features are **not** normalized.
+  </Tab>
+  <Tab title="sumo.Rmd">
+    ```r
+    nn <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                    linear.output = FALSE, act.fct = 'logistic')
+    ```
+
+    - Two hidden layers: 4 neurons in the first, 2 in the second.
+    - Trained on `normalize(tr)` — the 85% training split with min-max scaling applied.
+    - `linear.output = FALSE` ensures the output is passed through the activation function (appropriate for binary classification).
+    - `act.fct = 'logistic'` explicitly selects the logistic sigmoid as the activation function.
+  </Tab>
+</Tabs>
+
+## Prediction
+
+```r
+nn.ans <- predict(nn, undecided)
+```
+
+`predict()` returns a **probability** in `[0, 1]` — the estimated probability that the left wrestler wins. The decision threshold is `0.5`:
+
+```r
+if (nn.ans >= 0.5) {
+  print('NN says left.') 
+} else {print('NN says right.')}
+nn.ans
+```
+
+| `nn.ans` value | Prediction                  |
+| -------------- | --------------------------- |
+| `>= 0.5`       | Left wrestler wins          |
+| `< 0.5`        | Right wrestler wins         |
+
+<Note>
+The GLM returns log-odds and uses `> 0` as its threshold; the neural network returns a probability and uses `>= 0.5`. These are equivalent decision boundaries — a log-odds of 0 corresponds to a probability of exactly 0.5.
+</Note>
+
+## Model evaluation
+
+The evaluation workflow in `sumo.Rmd` compares neural network predictions against held-out ground truth using a confusion matrix:
+
+```r
+nn <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                linear.output = FALSE, act.fct = 'logistic')
+nn.ans <- predict(nn, ev)
+results$nn.ans = sapply(results$nn.ans,
+                         function(x) {if (x >= 0.5) {TRUE} else {FALSE}})
+confusionMatrix(as.factor(results$nn), as.factor(results$truth))
+```
+
+The `sapply` call converts the continuous probability vector to a logical vector using the `>= 0.5` threshold, aligning it with the `truth` column for direct comparison via `caret::confusionMatrix`.
+
+<Tip>
+The GLM achieves approximately **70% accuracy** on held-out data. The neural network serves as a complementary approach — comparing outputs from both models provides a cross-check when the two methods disagree on an upcoming match.
+</Tip>
+
+## Visualization
+
+Calling `plot(nn)` renders a graph of the trained network, showing all neurons, connections, and the learned weights on each edge:
+
+```r
+plot(nn)
+```
+
+This is useful for inspecting which input features received large weights and for verifying the network topology matches the intended architecture.

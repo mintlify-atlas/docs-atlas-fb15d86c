@@ -1,0 +1,414 @@
+---
+title: "Function Reference"
+description: "Complete reference for every function defined in the Sumo Oracle codebase, plus the key external package functions used in the prediction workflow."
+---
+
+This page documents all functions defined in `pred_sumo.R` and `sumo.Rmd`, as well as the external R package functions that are central to the Sumo Oracle prediction pipeline.
+
+## Project-defined functions
+
+<AccordionGroup>
+
+<Accordion title="sumo.read(csv)" icon="file-csv">
+
+Reads a CSV file of sumo match data, coerces all columns to numeric, then converts the `result` column to logical (`TRUE`/`FALSE`/`NA`).
+
+Defined in: `pred_sumo.R`, `sumo.Rmd`
+
+```r
+sumo.read <- function(csv) {
+  data <- tibble(read.csv(csv)) %>%
+    mutate_all(as.numeric) %>%
+    mutate(result = as.logical(result))
+  return(data)
+}
+```
+
+**Parameters**
+
+<ParamField path="csv" type="character" required>
+  Path to the CSV file containing sumo match data. Example: `'sumo.csv'`
+</ParamField>
+
+**Returns**
+
+<ResponseField name="data" type="tibble">
+  A tibble with the following columns after type coercion:
+
+  <Expandable title="columns">
+    <ResponseField name="weight1" type="numeric">Weight of the left wrestler (lbs)</ResponseField>
+    <ResponseField name="weight2" type="numeric">Weight of the right wrestler (lbs)</ResponseField>
+    <ResponseField name="wins1" type="numeric">Career wins of the left wrestler</ResponseField>
+    <ResponseField name="wins2" type="numeric">Career wins of the right wrestler</ResponseField>
+    <ResponseField name="age1" type="numeric">Age of the left wrestler in years</ResponseField>
+    <ResponseField name="age2" type="numeric">Age of the right wrestler in years</ResponseField>
+    <ResponseField name="height1" type="numeric">Height of the left wrestler (cm)</ResponseField>
+    <ResponseField name="height2" type="numeric">Height of the right wrestler (cm)</ResponseField>
+    <ResponseField name="result" type="logical">Match outcome — `TRUE` = left won, `FALSE` = right won, `NA` = undecided/pending</ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example usage**
+
+```r
+data     <- sumo.read('sumo.csv')
+history  <- na.omit(data)          # decided matches only
+undecided <- filter(data, is.na(result))  # pending matches
+```
+
+<Note>
+  Rows with a blank `result` field in the CSV become `NA` after coercion, which is how the pipeline distinguishes undecided matches from decided ones.
+</Note>
+
+</Accordion>
+
+<Accordion title="data.split(data, ratio)" icon="scissors">
+
+Randomly splits a data frame into two subsets for train/test evaluation.
+
+Defined in: `sumo.Rmd`
+
+```r
+data.split <- function(data, ratio) {
+  n <- round(nrow(data) * ratio)
+  train <- sample(1:nrow(data), n)
+  test <- setdiff(1:nrow(data), train)
+  return(list(data[train,], data[test,]))
+}
+```
+
+**Parameters**
+
+<ParamField path="data" type="data.frame | tibble" required>
+  The full dataset to split. Typically the `history` tibble produced by `sumo.read()` after removing `NA` rows.
+</ParamField>
+
+<ParamField path="ratio" type="numeric" required placeholder="0–1">
+  Proportion of rows to assign to the training set. For example, `0.85` reserves 85% for training and 15% for testing.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="split" type="list">
+  A list of length 2:
+
+  <Expandable title="elements">
+    <ResponseField name="[[1]]" type="data.frame | tibble">Training set — a random sample of `round(nrow(data) * ratio)` rows</ResponseField>
+    <ResponseField name="[[2]]" type="data.frame | tibble">Test set — the remaining rows not selected for training</ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Example usage**
+
+```r
+spl <- data.split(history, 0.85)
+tr  <- spl[[1]]   # training set
+ev  <- spl[[2]]   # evaluation/test set
+```
+
+<Tip>
+  The split is non-deterministic. Set a random seed with `set.seed()` before calling `data.split()` if you need reproducible results.
+</Tip>
+
+</Accordion>
+
+<Accordion title="normalize(x)" icon="arrow-right-arrow-left">
+
+Applies min-max normalization to a numeric vector, scaling all values to the range [0, 1].
+
+Defined in: `sumo.Rmd`
+
+```r
+normalize <- function(x) {
+  return( (x - min(x)) / (max(x) - min(x)) )
+}
+```
+
+**Parameters**
+
+<ParamField path="x" type="numeric vector" required>
+  The numeric vector to normalize. All values must be finite. The function will produce `NaN` if `max(x) == min(x)` (i.e., a constant vector).
+</ParamField>
+
+**Returns**
+
+<ResponseField name="result" type="numeric vector">
+  A numeric vector of the same length as `x`, with all values rescaled to [0, 1] using the formula `(x - min(x)) / (max(x) - min(x))`.
+</ResponseField>
+
+**Example usage**
+
+```r
+# Normalize the training set before fitting the neural network
+nn <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                linear.output = FALSE, act.fct = 'logistic')
+```
+
+<Note>
+  `normalize()` is used only in evaluation/testing mode (`sumo.Rmd` TESTING block) to preprocess training data before fitting the neural network. The prediction script (`pred_sumo.R`) passes raw data directly to `neuralnet()`.
+</Note>
+
+<Warning>
+  Applying `normalize()` to the training set but not the test set will cause a distribution mismatch. When using normalized training data, the test/evaluation set must be scaled using the same min and max values from the training set.
+</Warning>
+
+</Accordion>
+
+</AccordionGroup>
+
+---
+
+## External package functions
+
+These functions come from base R and third-party packages. They are documented here because they form the core of the Sumo Oracle prediction and evaluation workflow.
+
+<AccordionGroup>
+
+<Accordion title="glm(formula, data, family)" icon="chart-line">
+
+Fits a generalized linear model. Used in Sumo Oracle to fit a binomial logistic regression on the match history.
+
+**Package:** base R (`stats`)
+
+**Usage in this project**
+
+```r
+bin <- glm(result ~ ., history, family = 'binomial')
+```
+
+`result ~ .` fits `result` against all other columns in `history`. The `binomial` family specifies logistic regression.
+
+**Parameters**
+
+<ParamField path="formula" type="formula" required>
+  Model formula. In this project: `result ~ .` — predict `result` using all other columns.
+</ParamField>
+
+<ParamField path="data" type="data.frame | tibble" required>
+  The training data. In this project: `history` (decided matches only, `NA` rows removed).
+</ParamField>
+
+<ParamField path="family" type="character | family object" required>
+  Error distribution and link function. Use `'binomial'` for logistic regression on a binary outcome.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="bin" type="glm object">
+  A fitted GLM model object. Pass to `predict.glm()` to generate predictions on new data.
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="predict.glm(object, newdata)" icon="wand-magic-sparkles">
+
+Generates predictions from a fitted GLM. Returns log-odds (on the link scale) for binomial models by default.
+
+**Package:** base R (`stats`)
+
+**Usage in this project**
+
+```r
+bin.ans <- predict.glm(bin, undecided)
+```
+
+**Parameters**
+
+<ParamField path="object" type="glm object" required>
+  A fitted model returned by `glm()`. In this project: `bin`.
+</ParamField>
+
+<ParamField path="newdata" type="data.frame | tibble" required>
+  New observations to predict. In this project: `undecided` — rows where `result` is `NA`.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="bin.ans" type="numeric vector">
+  Log-odds for each row in `newdata`. Interpretation in this project:
+
+  - **Positive value** → left wrestler is predicted to win
+  - **Negative value** → right wrestler is predicted to win
+</ResponseField>
+
+**Decision logic**
+
+```r
+if (bin.ans > 0) {
+  print('GLM says left.')
+} else {
+  print('GLM says right.')
+}
+```
+
+<Note>
+  The default prediction type for binomial GLMs is `"link"` (log-odds), not `"response"` (probability). To get probabilities, pass `type = "response"` to `predict.glm()`.
+</Note>
+
+</Accordion>
+
+<Accordion title="neuralnet(formula, data, hidden, ...)" icon="brain">
+
+Fits a feed-forward neural network using backpropagation.
+
+**Package:** `neuralnet`
+
+**Usage in this project**
+
+Prediction mode (`pred_sumo.R`):
+
+```r
+nn <- neuralnet(result ~ ., history, hidden = 8)
+```
+
+Evaluation mode (`sumo.Rmd`, TESTING block):
+
+```r
+nn <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                linear.output = FALSE, act.fct = 'logistic')
+```
+
+**Parameters**
+
+<ParamField path="formula" type="formula" required>
+  Model formula. In this project: `result ~ .` — predict `result` using all other columns.
+</ParamField>
+
+<ParamField path="data" type="data.frame | tibble" required>
+  Training data. Use raw `history` for prediction mode, or `normalize(tr)` for evaluation mode.
+</ParamField>
+
+<ParamField path="hidden" type="numeric | numeric vector" required>
+  Hidden layer architecture. A single integer (e.g., `8`) creates one hidden layer with 8 neurons. A vector (e.g., `c(4, 2)`) creates multiple layers.
+</ParamField>
+
+<ParamField path="linear.output" type="boolean" default="TRUE">
+  Whether to use a linear output layer. Set to `FALSE` for classification tasks so the output is passed through the activation function.
+</ParamField>
+
+<ParamField path="act.fct" type="character" default="logistic">
+  Activation function for hidden layers. Common values: `'logistic'`, `'tanh'`.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="nn" type="neuralnet object">
+  A fitted neural network model object. Pass to `predict()` to generate predictions on new data.
+</ResponseField>
+
+</Accordion>
+
+<Accordion title="predict(nn, newdata)" icon="circle-play">
+
+Generates predictions from a fitted `neuralnet` model. Returns predicted probabilities.
+
+**Package:** `neuralnet`
+
+**Usage in this project**
+
+```r
+nn.ans <- predict(nn, undecided)
+```
+
+**Parameters**
+
+<ParamField path="nn" type="neuralnet object" required>
+  A fitted neural network returned by `neuralnet()`.
+</ParamField>
+
+<ParamField path="newdata" type="data.frame | tibble" required>
+  New observations to predict. In this project: `undecided` (prediction mode) or `ev` (evaluation mode).
+</ParamField>
+
+**Returns**
+
+<ResponseField name="nn.ans" type="numeric matrix">
+  Predicted probability for each row in `newdata`. Interpretation in this project:
+
+  - **Value ≥ 0.5** → left wrestler is predicted to win
+  - **Value < 0.5** → right wrestler is predicted to win
+</ResponseField>
+
+**Decision logic**
+
+```r
+if (nn.ans >= 0.5) {
+  print('NN says left.')
+} else {
+  print('NN says right.')
+}
+```
+
+</Accordion>
+
+<Accordion title="confusionMatrix(data, reference)" icon="table">
+
+Computes a confusion matrix and associated classification statistics to evaluate model performance.
+
+**Package:** `caret`
+
+**Usage in this project**
+
+```r
+confusionMatrix(as.factor(results$glm),  as.factor(results$truth))
+confusionMatrix(as.factor(results$nn),   as.factor(results$truth))
+```
+
+Both the predicted values and the ground-truth labels must be coerced to factors before passing to `confusionMatrix()`.
+
+**Parameters**
+
+<ParamField path="data" type="factor" required>
+  Predicted class labels as a factor. In this project: `as.factor(results$glm)` or `as.factor(results$nn)`.
+</ParamField>
+
+<ParamField path="reference" type="factor" required>
+  True class labels as a factor. In this project: `as.factor(results$truth)`.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="cm" type="confusionMatrix object">
+  A confusion matrix object containing:
+
+  <Expandable title="statistics">
+    <ResponseField name="Accuracy" type="numeric">Overall fraction of correctly classified matches</ResponseField>
+    <ResponseField name="Kappa" type="numeric">Cohen's kappa — accuracy adjusted for chance agreement</ResponseField>
+    <ResponseField name="Sensitivity" type="numeric">True positive rate (left-wins correctly predicted)</ResponseField>
+    <ResponseField name="Specificity" type="numeric">True negative rate (right-wins correctly predicted)</ResponseField>
+    <ResponseField name="Pos Pred Value" type="numeric">Precision — fraction of predicted left-wins that are correct</ResponseField>
+    <ResponseField name="Neg Pred Value" type="numeric">Fraction of predicted right-wins that are correct</ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Full evaluation workflow**
+
+```r
+# Split data
+spl <- data.split(history, 0.85)
+tr  <- spl[[1]]
+ev  <- spl[[2]]
+
+# Fit models
+bin <- glm(result ~ ., tr, family = 'binomial')
+nn  <- neuralnet(result ~ ., normalize(tr), hidden = c(4, 2),
+                 linear.output = FALSE, act.fct = 'logistic')
+
+# Generate predictions
+bin.ans <- predict.glm(bin, ev)
+nn.ans  <- predict(nn, ev)
+
+# Threshold to logical
+results <- tibble(bin.ans) %>% cbind(nn.ans) %>% cbind(ev$result)
+results$bin.ans <- sapply(results$bin.ans, function(x) x > 0)
+results$nn.ans  <- sapply(results$nn.ans,  function(x) x >= 0.5)
+colnames(results) <- c('glm', 'nn', 'truth')
+
+# Evaluate
+confusionMatrix(as.factor(results$glm), as.factor(results$truth))
+confusionMatrix(as.factor(results$nn),  as.factor(results$truth))
+```
+
+</Accordion>
+
+</AccordionGroup>

@@ -1,0 +1,97 @@
+---
+title: "GLM Model"
+description: "How the binomial generalized linear model (logistic regression) is trained and used to predict sumo match outcomes."
+---
+
+The Sumo Oracle project uses a **binomial generalized linear model** (GLM) as its primary prediction method. GLMs are well-suited to binary outcomes like win/loss: the `binomial` family applies a logit link function that maps the linear predictor to a probability between 0 and 1.
+
+## Why a binomial GLM
+
+A match result is a binary variable — either the left wrestler wins (`TRUE`) or the right wrestler wins (`FALSE`). Logistic regression (a GLM with `family = 'binomial'`) models the log-odds of the left wrestler winning as a linear combination of the eight input features. Compared to a neural network, this approach:
+
+- Requires no feature normalization.
+- Produces interpretable coefficients.
+- Generalizes well on small datasets due to the regularization implicit in maximum-likelihood estimation with the MASS package.
+
+<Info>
+The project loads the `MASS` package alongside `dplyr`. The `glm()` function itself comes from base R's `stats` package. MASS is a common statistical computing library that is frequently loaded alongside GLM workflows.
+</Info>
+
+## Training
+
+The model is trained on `history` — all rows from `sumo.csv` where `result` is not `NA`:
+
+```r
+bin <- glm(result ~ ., history, family = 'binomial')
+```
+
+- `result ~ .` expands to `result ~ weight1 + weight2 + wins1 + wins2 + age1 + age2 + height1 + height2`, using all eight features as predictors.
+- `history` is the training data frame (rows with known outcomes).
+- `family = 'binomial'` selects the logit link, making this logistic regression.
+
+The fitted object `bin` holds the coefficient estimates, standard errors, and deviance statistics.
+
+## The "Bayesian GLM" label
+
+The README and project description call this a "Bayesian GLM", but the implementation uses standard maximum-likelihood estimation via R's built-in `glm()` function from the `stats` package. The `MASS` package is loaded as a dependency but `glm()` does not rely on it for the model fit.
+
+<Note>
+The "Bayesian GLM" label is the project author's description, not a technical characterization of the fitting method. The model is logistic regression fitted by maximum likelihood. No explicit priors or MCMC sampling are used.
+</Note>
+
+## Prediction
+
+Once trained, the model generates predictions for upcoming matches in `undecided`:
+
+```r
+bin.ans <- predict.glm(bin, undecided)
+```
+
+`predict.glm` returns the **log-odds** (the linear predictor on the logit scale), not a probability. The sign of the log-odds determines the predicted winner:
+
+- **Positive** log-odds → left wrestler is more likely to win.
+- **Negative** log-odds → right wrestler is more likely to win.
+
+```r
+if (bin.ans > 0) {
+  print('GLM says left.') 
+} else {print('GLM says right.')}
+bin.ans
+```
+
+The raw numeric value of `bin.ans` is printed after the decision for inspection. To convert to a probability: `plogis(bin.ans)`.
+
+<Tip>
+`predict.glm` accepts a `type` argument. The default (`type = "link"`) returns log-odds. Use `type = "response"` to get probabilities directly without calling `plogis()`.
+</Tip>
+
+## Model diagnostics
+
+Calling `plot(bin)` generates four standard GLM diagnostic plots:
+
+1. **Residuals vs Fitted** — checks for non-linearity.
+2. **Normal Q-Q** — checks whether deviance residuals are approximately normal.
+3. **Scale-Location** — checks for heteroscedasticity.
+4. **Residuals vs Leverage** — identifies influential observations.
+
+```r
+plot(bin)
+```
+
+## Model evaluation
+
+For measuring accuracy, the workflow in `sumo.Rmd` holds out 15% of `history` as an evaluation set and runs a confusion matrix:
+
+```r
+bin <- glm(result ~ ., tr, family = 'binomial')
+bin.ans <- predict.glm(bin, ev)
+results$bin.ans = sapply(results$bin.ans,
+                         function(x) {if (x > 0) {TRUE} else {FALSE}})
+confusionMatrix(as.factor(results$glm), as.factor(results$truth))
+```
+
+The `sapply` converts the continuous log-odds vector to a logical vector using the same threshold (`> 0`), so results can be compared directly against `ev$result` via `caret::confusionMatrix`.
+
+<Info>
+The GLM consistently achieves approximately **70% accuracy** on held-out data. This is the benchmark against which the neural network is compared.
+</Info>

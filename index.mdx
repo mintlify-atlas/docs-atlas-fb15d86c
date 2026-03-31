@@ -1,97 +1,63 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Sumo Oracle"
+description: "Predict sumo match outcomes using Bayesian GLM and neural network models in R"
 ---
 
-## Setting up
+Sumo Oracle is an R-based machine learning project that predicts the outcome of sumo matches using two complementary models: a Bayesian Generalized Linear Model (GLM) and a neural network. Both models are trained on historical wrestler attributes — weight, height, age, and win record — and can produce predictions for upcoming bouts.
 
-Get your documentation site up and running in minutes.
+The GLM model achieves approximately **70% prediction accuracy**, outperforming the neural network baseline on this dataset.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="circle-info" href="/introduction">
+    Learn what Sumo Oracle does, how it works, and what you need to get started.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, prepare your data, and run your first prediction in minutes.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="GLM Model" icon="chart-line" href="/concepts/glm-model">
+    Understand how the Bayesian binomial GLM is trained and why it outperforms the NN.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Neural Network" icon="brain" href="/concepts/neural-network">
+    Explore the neural network architecture and how it is configured for match prediction.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Prepare your data">
+    Collect wrestler attributes for both competitors in CSV format. The required columns are `weight1`, `weight2`, `wins1`, `wins2`, `age1`, `age2`, `height1`, `height2`, and `result`.
+  </Step>
+  <Step title="Load and preprocess">
+    Use `sumo.read()` to load the CSV into a typed tibble. Historical rows with known results are used for training; rows where `result` is `NA` are treated as matches to predict.
+  </Step>
+  <Step title="Train both models">
+    Fit the binomial GLM with `glm()` and train the neural network with `neuralnet()` on the historical data.
+  </Step>
+  <Step title="Generate predictions">
+    Call `predict.glm()` and `predict()` on the undecided rows. Each model outputs a directional prediction — left wrestler wins or right wrestler wins.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Key features
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Bayesian GLM" icon="scale-balanced">
+    Binomial logistic regression via `MASS` — interpretable coefficients and ~70% accuracy.
+  </Card>
+  <Card title="Neural network" icon="network-wired">
+    Configurable hidden layer topology via the `neuralnet` package with logistic activation.
+  </Card>
+  <Card title="CSV data ingestion" icon="file-csv">
+    Simple flat-file data format — no database required. Add new matches by editing one file.
+  </Card>
+  <Card title="Model evaluation" icon="square-check">
+    Built-in train/test splitting and confusion matrix reporting via `caret`.
+  </Card>
+  <Card title="R Markdown report" icon="file-lines">
+    Reproducible analysis with `sumo.Rmd` — renders a full PDF report with plots.
+  </Card>
+  <Card title="Side-by-side comparison" icon="code-compare">
+    Run both models on the same undecided matches and compare their outputs directly.
+  </Card>
+</CardGroup>

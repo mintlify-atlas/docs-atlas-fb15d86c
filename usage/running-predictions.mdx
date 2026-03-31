@@ -1,0 +1,146 @@
+---
+title: "Running predictions"
+description: "Run the GLM and neural network models to predict the outcome of an undecided sumo match."
+---
+
+Running a prediction is a two-step process: add an undecided match row to `sumo.csv`, then execute `pred_sumo.R`. Both models will output their predictions to the console.
+
+## The prediction script
+
+`pred_sumo.R` is the entry point for generating predictions. It loads the data, trains both models on historical matches, and predicts the outcome of any row where `result` is `NA`.
+
+```r pred_sumo.R
+library(dplyr)
+library(MASS)
+library(neuralnet)
+
+sumo.read <- function(csv) {
+  data <- tibble(read.csv(csv)) %>%
+    mutate_all(as.numeric) %>%
+    mutate(result = as.logical(result))
+  return(data)
+}
+
+data <- sumo.read('sumo.csv')
+history <- na.omit(data)
+undecided <- filter(data, is.na(result))
+
+nn <- neuralnet(result ~ ., history, hidden = 8)
+bin <- glm(result ~ ., history, family = 'binomial')
+
+bin.ans <- predict.glm(bin, undecided)
+nn.ans <- predict(nn, undecided)
+
+if (bin.ans > 0) {
+  print('GLM says left.') 
+} else {print('GLM says right.')}
+bin.ans
+
+if (nn.ans >= 0.5) {
+  print('NN says left.') 
+} else {print('NN says right.')}
+nn.ans
+```
+
+## Workflow
+
+<Steps>
+  <Step title="Add an undecided match to sumo.csv">
+    Append a new row to `sumo.csv` with all wrestler attributes filled in and the `result` column left blank. For example:
+
+    ```
+    385,362,9,7,28,33,188,181,
+    ```
+
+    The trailing comma produces an `NA` value when R reads the file, which is what `filter(data, is.na(result))` matches on.
+
+    <Warning>
+      Only one undecided row is supported at a time. The script assumes a single row in `undecided`. Adding multiple blank-result rows will cause `predict.glm` and `predict` to return vectors, breaking the `if` comparisons.
+    </Warning>
+  </Step>
+
+  <Step title="Run pred_sumo.R">
+    Source the script from an R console or run it directly in RStudio.
+
+    **R console:**
+
+    ```r
+    source("pred_sumo.R")
+    ```
+
+    **RStudio:** open `pred_sumo.R` and click **Source**, or press `Ctrl+Shift+S` (`Cmd+Shift+S` on macOS).
+
+    <Note>
+      The script must be run from the same directory as `sumo.csv`, or you must update the path passed to `sumo.read()`.
+    </Note>
+  </Step>
+
+  <Step title="Read the output">
+    After the models train, both predictions are printed to the console. See the section below for how to interpret them.
+  </Step>
+</Steps>
+
+## What happens internally
+
+When you source `pred_sumo.R`, the following sequence executes:
+
+1. **`sumo.read('sumo.csv')`** — reads the CSV, coerces all columns to numeric, then converts `result` to logical (`TRUE`/`FALSE`/`NA`).
+2. **`na.omit(data)`** — drops the undecided row to produce the `history` data frame used for training.
+3. **`filter(data, is.na(result))`** — isolates the undecided row into `undecided`.
+4. **Model training** — a neural network (`neuralnet`, 8 hidden nodes) and a binomial GLM are both trained on `history`.
+5. **Prediction** — `predict.glm` and `predict` are called with the `undecided` row.
+6. **Output** — each model prints its direction and its raw prediction value.
+
+## Reading the output
+
+### GLM output
+
+```
+[1] "GLM says left."
+bin.ans
+        1
+ 1.382941
+```
+
+`bin.ans` is a log-odds value.
+
+- A **positive** value means the GLM predicts the **left wrestler wins**.
+- A **negative** value means the GLM predicts the **right wrestler wins**.
+- Values closer to zero indicate lower confidence; larger absolute values indicate higher confidence.
+
+### Neural network output
+
+```
+[1] "NN says left."
+nn.ans
+          [,1]
+[1,] 0.6173284
+```
+
+`nn.ans` is a probability in the range `[0, 1]`.
+
+- A value **≥ 0.5** means the NN predicts the **left wrestler wins**.
+- A value **< 0.5** means the NN predicts the **right wrestler wins**.
+- Values near 0.5 indicate low confidence; values near 0 or 1 indicate high confidence.
+
+### Example session
+
+```r
+> source("pred_sumo.R")
+[1] "GLM says left."
+        1
+ 1.382941
+[1] "NN says right."
+          [,1]
+[1,] 0.4021853
+```
+
+In this example the two models disagree.
+
+## Handling disagreement between models
+
+<Tip>
+  When the GLM and the neural network disagree, trust the GLM. It consistently achieves around 70% accuracy on held-out test data, whereas the neural network's accuracy is more variable. The GLM is the more reliable of the two for this dataset.
+</Tip>
+
+If both models agree, the prediction is more reliable. If they disagree, the safer choice is to follow the GLM's direction while noting the uncertainty.

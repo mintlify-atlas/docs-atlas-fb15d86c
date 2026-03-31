@@ -1,0 +1,128 @@
+---
+title: "Data Schema"
+description: "Complete reference for the sumo.csv file format, column definitions, example rows, and how the data is loaded and validated by the Sumo Oracle pipeline."
+---
+
+The Sumo Oracle pipeline reads all of its input from a single flat CSV file: `sumo.csv`. This page describes the file format, every column, example rows, and how the data is transformed during loading.
+
+## File format
+
+| Property   | Value                    |
+|------------|--------------------------|
+| Format     | Plain CSV                |
+| Delimiter  | Comma (`,`)              |
+| Header row | Yes — first row          |
+| Encoding   | UTF-8                    |
+| Extension  | `.csv`                   |
+
+Each row represents one sumo match. Decided matches have a `1` or `0` in the `result` column. Undecided (pending) matches leave the `result` field blank.
+
+---
+
+## Column reference
+
+| Column    | Type    | Description                                         | Example |
+|-----------|---------|-----------------------------------------------------|---------|
+| `weight1` | numeric | Weight of the left wrestler (lbs)                  | `401`   |
+| `weight2` | numeric | Weight of the right wrestler (lbs)                 | `379`   |
+| `wins1`   | numeric | Career wins of the left wrestler                   | `6`     |
+| `wins2`   | numeric | Career wins of the right wrestler                  | `5`     |
+| `age1`    | numeric | Age of the left wrestler (years)                   | `35`    |
+| `age2`    | numeric | Age of the right wrestler (years)                  | `31`    |
+| `height1` | numeric | Height of the left wrestler (cm)                   | `190`   |
+| `height2` | numeric | Height of the right wrestler (cm)                  | `184`   |
+| `result`  | boolean | `1`/`TRUE` = left won; `0`/`FALSE` = right won; blank/`NA` = undecided | `1` |
+
+<Note>
+  "Left" and "right" refer to the order in which the two wrestlers appear in the row — `weight1`, `wins1`, `age1`, `height1` all belong to the same (left) wrestler, and the `2` columns to the other (right) wrestler.
+</Note>
+
+---
+
+## Example rows
+
+### Decided matches
+
+The following rows represent matches with known outcomes.
+
+```csv
+weight1,weight2,wins1,wins2,age1,age2,height1,height2,result
+401,379,6,5,35,31,190,184,1
+344,370,8,11,36,34,189,192,1
+351,245,3,2,22,27,189,169,0
+335,291,3,12,32,30,177,176,0
+```
+
+- Rows 2 and 3: `result = 1` — the left wrestler won.
+- Rows 4 and 5: `result = 0` — the right wrestler won.
+
+### Undecided match
+
+A match where the outcome is not yet known. The `result` field is left blank (no value after the final comma).
+
+```csv
+weight1,weight2,wins1,wins2,age1,age2,height1,height2,result
+385,362,9,7,28,33,188,181,
+```
+
+<Tip>
+  When building a new prediction, add exactly one undecided row (blank `result`) to `sumo.csv` alongside the historical data. `sumo.read()` will separate it automatically. Only one undecided row is supported at a time — the prediction script uses scalar comparisons that will fail if `undecided` contains multiple rows.
+</Tip>
+
+---
+
+## How sumo.read() processes the file
+
+The `sumo.read()` function performs two transformation passes after reading the CSV:
+
+```r
+sumo.read <- function(csv) {
+  data <- tibble(read.csv(csv)) %>%
+    mutate_all(as.numeric) %>%          # pass 1: all columns → numeric
+    mutate(result = as.logical(result)) # pass 2: result column → logical
+  return(data)
+}
+```
+
+**Pass 1 — cast all columns to numeric**
+
+`mutate_all(as.numeric)` converts every column (including `result`) to a double. This means:
+- `"1"` → `1`
+- `"0"` → `0`
+- `""` (blank) → `NA`
+
+**Pass 2 — cast result to logical**
+
+`mutate(result = as.logical(result))` then converts the numeric result column:
+- `1` → `TRUE`
+- `0` → `FALSE`
+- `NA` → `NA` (preserved)
+
+After loading, the pipeline splits the tibble by `result` value:
+
+```r
+data      <- sumo.read('sumo.csv')
+history   <- na.omit(data)                   # decided matches (result = TRUE or FALSE)
+undecided <- filter(data, is.na(result))     # pending matches (result = NA)
+```
+
+`history` is used to train the models. `undecided` is passed to `predict.glm()` and `predict()` to generate match outcome predictions.
+
+---
+
+## Validation rules
+
+<Warning>
+  The pipeline does not perform runtime validation. Malformed input will produce silent errors or incorrect predictions. Ensure your CSV satisfies these constraints before running the models.
+</Warning>
+
+| Rule | Detail |
+|------|--------|
+| All numeric columns must be numeric | `weight1`, `weight2`, `wins1`, `wins2`, `age1`, `age2`, `height1`, `height2` must all parse as numbers. Non-numeric strings will become `NA` after `as.numeric()` coercion, which will cause `na.omit()` to silently drop those rows. |
+| `result` must be `0`, `1`, or blank | Any other value (e.g., `"win"`, `"TRUE"`) will coerce to `NA`, making the row appear undecided rather than decided. |
+| No extra columns | `result ~ .` in the model formulas uses all columns. Adding extra columns will include them as predictors. |
+| At least one decided row required | Training requires at least one `TRUE` and one `FALSE` outcome in `history`. An empty or all-undecided file will cause `glm()` and `neuralnet()` to fail. |
+
+<Note>
+  The `result` column is the only column where a missing value (`NA`) has a defined semantic meaning — it marks the row as a match to be predicted. For all other columns, `NA` values indicate bad data and the row will be silently excluded by `na.omit()`.
+</Note>
